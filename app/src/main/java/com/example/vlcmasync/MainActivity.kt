@@ -120,7 +120,8 @@ class MainActivity : Activity() {
         }
 
         /*
-         * Existing manual search.
+         * Keep the old manual search for now.
+         * It is useful for checking that MAL itself still works.
          */
         val query =
             EditText(this)
@@ -135,14 +136,14 @@ class MainActivity : Activity() {
             "Find anime on MAL"
 
         find.setOnClickListener {
-
             searchAnime(
                 query.text.toString()
             )
         }
 
         /*
-         * Existing manual episode sync.
+         * Keep the old manual episode updater too.
+         * We'll remove it once the automatic VLC system works.
          */
         val mark =
             Button(this)
@@ -155,26 +156,25 @@ class MainActivity : Activity() {
         }
 
         /*
-         * =====================================================
-         * AUTOMATIC SYNC TEST
-         * =====================================================
+         * TEMPORARY filename input.
+         *
+         * Eventually VLC will provide this automatically.
          */
-
         val filename =
             EditText(this)
 
         filename.hint =
-            "Example: Re Zero S1E01.mkv"
+            "Anime Title S1E01.mkv"
 
-        val autoSync =
+        val sync =
             Button(this)
 
-        autoSync.text =
-            "Test automatic MAL sync"
+        sync.text =
+            "Sync filename to MAL"
 
-        autoSync.setOnClickListener {
+        sync.setOnClickListener {
 
-            automaticSync(
+            syncFilename(
                 filename.text.toString()
             )
         }
@@ -189,7 +189,7 @@ class MainActivity : Activity() {
         box.addView(mark)
 
         box.addView(filename)
-        box.addView(autoSync)
+        box.addView(sync)
 
         setContentView(box)
     }
@@ -209,7 +209,7 @@ class MainActivity : Activity() {
 
     /*
      * =========================================================
-     * MAL LOGIN
+     * LOGIN
      * =========================================================
      */
 
@@ -235,9 +235,6 @@ class MainActivity : Activity() {
             .remove(PREF_TOKEN)
             .apply()
 
-        val challenge =
-            verifier
-
         val uri =
             Uri.Builder()
                 .scheme("https")
@@ -259,7 +256,7 @@ class MainActivity : Activity() {
                 )
                 .appendQueryParameter(
                     "code_challenge",
-                    challenge
+                    verifier
                 )
                 .appendQueryParameter(
                     "code_challenge_method",
@@ -409,7 +406,7 @@ class MainActivity : Activity() {
 
     /*
      * =========================================================
-     * MANUAL SEARCH
+     * EXISTING MANUAL SEARCH
      * =========================================================
      */
 
@@ -473,7 +470,8 @@ class MainActivity : Activity() {
                                     results[which]
 
                                 status.text =
-                                    "Selected: ${results[which].title}"
+                                    "Selected: " +
+                                    results[which].title
                             }
                             .show()
                     }
@@ -496,12 +494,6 @@ class MainActivity : Activity() {
      * =========================================================
      * FILENAME PARSER
      * =========================================================
-     *
-     * Required format:
-     *
-     * Anime Title S1E01.mkv
-     *
-     * Anime Title S2E12.mp4
      */
 
     private data class AnimeFile(
@@ -522,6 +514,13 @@ class MainActivity : Activity() {
                 )
                 .trim()
 
+        /*
+         * Required:
+         *
+         * Anime Title S1E01
+         * Anime Title S2E12
+         * Anime Title S10E105
+         */
         val regex =
             Regex(
                 """^(.+?)\s+S(\d+)E(\d+)$""",
@@ -555,33 +554,110 @@ class MainActivity : Activity() {
         }
 
         return AnimeFile(
-            title,
-            season,
-            episode
+            title = title,
+            season = season,
+            episode = episode
         )
     }
 
     /*
      * =========================================================
-     * AUTOMATIC MAL SYNC
+     * TITLE NORMALIZATION
+     * =========================================================
+     *
+     * Used only for matching.
+     *
+     * "Re Zero"
+     * "Re:ZERO"
+     *
+     * become much closer to each other.
+     */
+
+    private fun normalizeTitle(
+        title: String
+    ): String {
+
+        return title
+            .lowercase(Locale.US)
+            .replace(
+                Regex("[^a-z0-9]+"),
+                ""
+            )
+    }
+
+    /*
+     * =========================================================
+     * FIND A SAFE MAL MATCH
+     * =========================================================
+     *
+     * We do NOT blindly choose result #1.
+     */
+
+    private fun findBestMatch(
+        inputTitle: String,
+        results: List<MalAnime>
+    ): MalAnime? {
+
+        val wanted =
+            normalizeTitle(
+                inputTitle
+            )
+
+        if (wanted.isBlank()) {
+            return null
+        }
+
+        /*
+         * Exact main-title match.
+         */
+        results.firstOrNull { anime ->
+
+            normalizeTitle(
+                anime.title
+            ) == wanted
+
+        }?.let {
+            return it
+        }
+
+        /*
+         * Exact alternative-title match.
+         */
+        results.firstOrNull { anime ->
+
+            anime.alternativeTitles.any { alt ->
+
+                normalizeTitle(
+                    alt
+                ) == wanted
+            }
+
+        }?.let {
+            return it
+        }
+
+        /*
+         * Deliberately DON'T automatically accept a vague
+         * partial match.
+         *
+         * This prevents random files from changing MAL.
+         */
+        return null
+    }
+
+    /*
+     * =========================================================
+     * AUTOMATIC FILENAME → MAL
      * =========================================================
      */
 
-    private fun automaticSync(
+    private fun syncFilename(
         filename: String
     ) {
 
         val token =
             requireToken()
                 ?: return
-
-        if (filename.isBlank()) {
-
-            status.text =
-                "Enter a filename."
-
-            return
-        }
 
         val file =
             parseAnimeFilename(
@@ -597,124 +673,43 @@ class MainActivity : Activity() {
         }
 
         status.text =
-            "Detected ${file.title} — " +
-            "S${file.season}E" +
-            String.format(
-                Locale.US,
-                "%02d",
-                file.episode
-            )
+            "Searching MAL for ${file.title}..."
 
         scope.launch(Dispatchers.IO) {
 
             try {
 
-                /*
-                 * Search MAL.
-                 */
                 val results =
                     api.search(
                         token,
                         file.title
                     )
 
-                if (results.isEmpty()) {
+                val anime =
+                    findBestMatch(
+                        file.title,
+                        results
+                    )
+
+                if (anime == null) {
 
                     withContext(
                         Dispatchers.Main
                     ) {
 
                         status.text =
-                            "No MAL anime found. Ignored."
+                            "No reliable MAL match for " +
+                            "\"${file.title}\". Ignored."
                     }
 
                     return@launch
                 }
 
                 /*
-                 * Don't automatically choose a result yet.
+                 * We have a reliable title match.
                  *
-                 * Show the results so we can verify the
-                 * matching behavior first.
+                 * Now check the user's list.
                  */
-
-                withContext(
-                    Dispatchers.Main
-                ) {
-
-                    val names =
-                        results.map { anime ->
-
-                            anime.title
-                        }
-
-                    AlertDialog.Builder(
-                        this@MainActivity
-                    )
-                        .setTitle(
-                            "Choose MAL anime"
-                        )
-                        .setMessage(
-                            "Detected:\n" +
-                            "${file.title}\n\n" +
-                            "Season ${file.season}, " +
-                            "Episode ${file.episode}"
-                        )
-                        .setItems(
-                            names.toTypedArray()
-                        ) { _, which ->
-
-                            val anime =
-                                results[which]
-
-                            selected =
-                                anime
-
-                            syncSelectedAnime(
-                                token,
-                                anime,
-                                file
-                            )
-                        }
-                        .setNegativeButton(
-                            "Ignore",
-                            null
-                        )
-                        .show()
-                }
-
-            } catch (e: Exception) {
-
-                withContext(
-                    Dispatchers.Main
-                ) {
-
-                    status.text =
-                        "Automatic search failed: ${e.message}"
-                }
-            }
-        }
-    }
-
-    /*
-     * =========================================================
-     * UPDATE SELECTED MAL ANIME
-     * =========================================================
-     */
-
-    private fun syncSelectedAnime(
-        token: String,
-        anime: MalAnime,
-        file: AnimeFile
-    ) {
-
-        status.text =
-            "Checking your MAL list..."
-
-        scope.launch(Dispatchers.IO) {
-
-            try {
-
                 val current =
                     api.getMyListStatus(
                         token,
@@ -729,52 +724,22 @@ class MainActivity : Activity() {
                         Date()
                     )
 
+                /*
+                 * =================================================
+                 * NOT CURRENTLY ON MAL LIST
+                 * =================================================
+                 */
+
                 if (current == null) {
 
-                    /*
-                     * Anime isn't on the user's list.
-                     *
-                     * Add it as Watching.
-                     */
                     api.updateListStatus(
                         token = token,
                         animeId = anime.id,
                         status = "watching",
                         watchedEpisodes =
                             file.episode,
-                        startDate = today
-                    )
-
-                    withContext(
-                        Dispatchers.Main
-                    ) {
-
-                        status.text =
-                            "✓ Added ${anime.title}\n" +
-                            "Watching\n" +
-                            "Season ${file.season}, " +
-                            "Episode ${file.episode}\n" +
-                            "Started: $today"
-                    }
-
-                } else {
-
-                    /*
-                     * Already on MAL.
-                     *
-                     * Preserve the existing start date.
-                     */
-                    val newEpisode =
-                        maxOf(
-                            current.watchedEpisodes,
-                            file.episode
-                        )
-
-                    api.updateListStatus(
-                        token = token,
-                        animeId = anime.id,
-                        watchedEpisodes =
-                            newEpisode
+                        startDate =
+                            today
                     )
 
                     withContext(
@@ -783,11 +748,50 @@ class MainActivity : Activity() {
 
                         status.text =
                             "✓ ${anime.title}\n" +
-                            "Existing status: " +
-                            current.status + "\n" +
-                            "Episodes watched: " +
-                            newEpisode
+                            "Watching\n" +
+                            "S${file.season}E" +
+                            String.format(
+                                Locale.US,
+                                "%02d",
+                                file.episode
+                            ) +
+                            "\nStarted: $today"
                     }
+
+                    return@launch
+                }
+
+                /*
+                 * =================================================
+                 * ALREADY ON MAL LIST
+                 * =================================================
+                 */
+
+                val newProgress =
+                    maxOf(
+                        current.watchedEpisodes,
+                        file.episode
+                    )
+
+                /*
+                 * Don't overwrite the user's start date.
+                 */
+                api.updateListStatus(
+                    token = token,
+                    animeId = anime.id,
+                    watchedEpisodes =
+                        newProgress
+                )
+
+                withContext(
+                    Dispatchers.Main
+                ) {
+
+                    status.text =
+                        "✓ ${anime.title}\n" +
+                        "Status: ${current.status}\n" +
+                        "Episodes watched: " +
+                        newProgress
                 }
 
             } catch (e: Exception) {
@@ -797,7 +801,8 @@ class MainActivity : Activity() {
                 ) {
 
                     status.text =
-                        "MAL sync failed: ${e.message}"
+                        "Automatic sync failed: " +
+                        e.message
                 }
             }
         }
@@ -878,7 +883,7 @@ class MainActivity : Activity() {
 
                         withContext(
                             Dispatchers.Main
-                                ) {
+                        ) {
 
                             status.text =
                                 "✓ ${anime.title}: " +
@@ -892,7 +897,8 @@ class MainActivity : Activity() {
                         ) {
 
                             status.text =
-                                "Update failed: ${e.message}"
+                                "Update failed: " +
+                                e.message
                         }
                     }
                 }
