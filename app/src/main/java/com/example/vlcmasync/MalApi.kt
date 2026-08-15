@@ -8,7 +8,12 @@ import java.net.URLEncoder
 
 data class MalAnime(
     val id: Int,
-    val title: String
+    val title: String,
+    val alternativeTitles: List<String>,
+    val type: String?,
+    val episodes: Int?,
+    val startDate: String?,
+    val endDate: String?
 )
 
 data class MalListStatus(
@@ -24,12 +29,6 @@ class MalApi(
 
     private val api =
         "https://api.myanimelist.net/v2"
-
-    /*
-     * =========================================================
-     * OAUTH TOKEN
-     * =========================================================
-     */
 
     fun token(
         cid: String,
@@ -60,9 +59,7 @@ class MalApi(
             .use { response ->
 
                 val text =
-                    response.body
-                        ?.string()
-                        .orEmpty()
+                    response.body?.string().orEmpty()
 
                 if (!response.isSuccessful) {
                     error(text)
@@ -73,28 +70,21 @@ class MalApi(
             }
     }
 
-    /*
-     * =========================================================
-     * SEARCH ANIME
-     * =========================================================
-     */
-
     fun search(
         token: String,
         query: String
     ): List<MalAnime> {
 
         val encoded =
-            URLEncoder.encode(
-                query,
-                "UTF-8"
-            )
+            URLEncoder.encode(query, "UTF-8")
 
         val url =
             "$api/anime" +
             "?q=$encoded" +
             "&limit=10" +
-            "&fields=id,title"
+            "&fields=" +
+            "id,title,alternative_titles," +
+            "num_episodes,start_date,end_date,media_type"
 
         val request =
             Request.Builder()
@@ -110,9 +100,7 @@ class MalApi(
             .use { response ->
 
                 val text =
-                    response.body
-                        ?.string()
-                        .orEmpty()
+                    response.body?.string().orEmpty()
 
                 if (!response.isSuccessful) {
                     error(text)
@@ -130,22 +118,106 @@ class MalApi(
                                 .getJSONObject(index)
                                 .getJSONObject("node")
 
+                        val alternatives =
+                            mutableListOf<String>()
+
+                        if (
+                            node.has(
+                                "alternative_titles"
+                            )
+                        ) {
+
+                            val alt =
+                                node.getJSONObject(
+                                    "alternative_titles"
+                                )
+
+                            if (
+                                alt.has("en")
+                            ) {
+                                alternatives.add(
+                                    alt.getString("en")
+                                )
+                            }
+
+                            if (
+                                alt.has("ja")
+                            ) {
+                                alternatives.add(
+                                    alt.getString("ja")
+                                )
+                            }
+
+                            if (
+                                alt.has("synonyms")
+                            ) {
+
+                                val synonyms =
+                                    alt.getJSONArray(
+                                        "synonyms"
+                                    )
+
+                                for (
+                                    i in 0 until synonyms.length()
+                                ) {
+                                    alternatives.add(
+                                        synonyms.getString(i)
+                                    )
+                                }
+                            }
+                        }
+
                         MalAnime(
-                            id = node.getInt("id"),
-                            title = node.getString("title")
+                            id =
+                                node.getInt("id"),
+
+                            title =
+                                node.getString("title"),
+
+                            alternativeTitles =
+                                alternatives,
+
+                            type =
+                                node.optString(
+                                    "media_type",
+                                    null
+                                ),
+
+                            episodes =
+                                if (
+                                    node.has(
+                                        "num_episodes"
+                                    ) &&
+                                    !node.isNull(
+                                        "num_episodes"
+                                    )
+                                ) {
+                                    node.getInt(
+                                        "num_episodes"
+                                    )
+                                } else {
+                                    null
+                                },
+
+                            startDate =
+                                node.optString(
+                                    "start_date",
+                                    ""
+                                ).ifBlank {
+                                    null
+                                },
+
+                            endDate =
+                                node.optString(
+                                    "end_date",
+                                    ""
+                                ).ifBlank {
+                                    null
+                                }
                         )
                     }
             }
     }
-
-    /*
-     * =========================================================
-     * GET USER'S MAL LIST STATUS
-     * =========================================================
-     *
-     * Returns null if the anime is not currently on the
-     * user's MAL list.
-     */
 
     fun getMyListStatus(
         token: String,
@@ -168,14 +240,8 @@ class MalApi(
             .use { response ->
 
                 val text =
-                    response.body
-                        ?.string()
-                        .orEmpty()
+                    response.body?.string().orEmpty()
 
-                /*
-                 * MAL returns an error when the anime is not
-                 * currently in the user's list.
-                 */
                 if (response.code == 404) {
                     return null
                 }
@@ -218,24 +284,6 @@ class MalApi(
                 )
             }
     }
-
-    /*
-     * =========================================================
-     * UPDATE USER'S MAL LIST
-     * =========================================================
-     *
-     * Every parameter except animeId/token is optional.
-     *
-     * Example:
-     *
-     * updateListStatus(
-     *     token,
-     *     12345,
-     *     status = "watching",
-     *     watchedEpisodes = 1,
-     *     startDate = "2026-08-15"
-     * )
-     */
 
     fun updateListStatus(
         token: String,
@@ -296,24 +344,13 @@ class MalApi(
             .use { response ->
 
                 val text =
-                    response.body
-                        ?.string()
-                        .orEmpty()
+                    response.body?.string().orEmpty()
 
                 if (!response.isSuccessful) {
                     error(text)
                 }
             }
     }
-
-    /*
-     * =========================================================
-     * EXISTING SIMPLE UPDATE
-     * =========================================================
-     *
-     * Kept so your existing MainActivity code continues
-     * working.
-     */
 
     fun update(
         token: String,
