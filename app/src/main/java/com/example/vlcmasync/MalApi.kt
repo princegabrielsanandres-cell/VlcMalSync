@@ -241,7 +241,12 @@ class MalApi(
                 }
 
                 if (!response.isSuccessful) {
-                    error(text)
+    error(
+        "MAL HTTP ${response.code}\n" +
+        "URL: ${request.url}\n" +
+        "METHOD: ${request.method}\n" +
+        "BODY: $text"
+    )
                 }
 
                 val json =
@@ -341,7 +346,12 @@ class MalApi(
                     response.body?.string().orEmpty()
 
                 if (!response.isSuccessful) {
-                    error(text)
+    error(
+        "MAL HTTP ${response.code}\n" +
+        "URL: ${request.url}\n" +
+        "METHOD: ${request.method}\n" +
+        "BODY: $text"
+    )
                 }
             }
     }
