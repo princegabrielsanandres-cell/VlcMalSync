@@ -132,25 +132,19 @@ class MalApi(
                                     "alternative_titles"
                                 )
 
-                            if (
-                                alt.has("en")
-                            ) {
+                            if (alt.has("en")) {
                                 alternatives.add(
                                     alt.getString("en")
                                 )
                             }
 
-                            if (
-                                alt.has("ja")
-                            ) {
+                            if (alt.has("ja")) {
                                 alternatives.add(
                                     alt.getString("ja")
                                 )
                             }
 
-                            if (
-                                alt.has("synonyms")
-                            ) {
+                            if (alt.has("synonyms")) {
 
                                 val synonyms =
                                     alt.getJSONArray(
@@ -334,7 +328,7 @@ class MalApi(
                     "Authorization",
                     "Bearer $token"
                 )
-                .put(
+                .post(
                     builder.build()
                 )
                 .build()
