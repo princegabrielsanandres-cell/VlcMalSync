@@ -90,6 +90,9 @@ class MainActivity : Activity() {
             loginToMal()
         }
 
+        /*
+         * Existing manual anime search.
+         */
         val query = EditText(this)
         query.hint = "Anime title"
 
@@ -100,6 +103,9 @@ class MainActivity : Activity() {
             searchAnime(query.text.toString())
         }
 
+        /*
+         * Existing manual episode sync.
+         */
         val mark = Button(this)
         mark.text = "Mark selected episode watched"
 
@@ -107,12 +113,34 @@ class MainActivity : Activity() {
             markEpisode()
         }
 
+        /*
+         * NEW:
+         *
+         * Test the filename format:
+         *
+         * Anime Title S1E01.mkv
+         */
+        val filename = EditText(this)
+        filename.hint = "Example: Re Zero S1E01.mkv"
+
+        val testFilename = Button(this)
+        testFilename.text = "Test anime filename"
+
+        testFilename.setOnClickListener {
+            testFilename(filename.text.toString())
+        }
+
         box.addView(title)
         box.addView(status)
         box.addView(login)
+
         box.addView(query)
         box.addView(find)
+
         box.addView(mark)
+
+        box.addView(filename)
+        box.addView(testFilename)
 
         setContentView(box)
     }
@@ -137,19 +165,11 @@ class MainActivity : Activity() {
             .withoutPadding()
             .encodeToString(bytes)
 
-        /*
-         * Save the exact verifier that will be used
-         * when exchanging the authorization code.
-         */
         prefs.edit()
             .putString(PREF_VERIFIER, verifier)
             .remove(PREF_TOKEN)
             .apply()
 
-        /*
-         * MAL OAuth uses the verifier itself as the
-         * code challenge with the plain method.
-         */
         val challenge = verifier
 
         val uri = Uri.Builder()
@@ -227,9 +247,6 @@ class MainActivity : Activity() {
             return
         }
 
-        /*
-         * Get the exact verifier saved before opening MAL.
-         */
         val verifier =
             prefs.getString(
                 PREF_VERIFIER,
@@ -247,10 +264,6 @@ class MainActivity : Activity() {
         status.text =
             "Completing MAL login..."
 
-        /*
-         * Prevent this authorization code from being
-         * accidentally processed twice.
-         */
         prefs.edit()
             .remove(PREF_VERIFIER)
             .apply()
@@ -381,6 +394,216 @@ class MainActivity : Activity() {
         }
     }
 
+    /*
+     * =========================================================
+     * NEW FILENAME PARSER
+     * =========================================================
+     *
+     * Expected format:
+     *
+     * Anime Title S1E01.mkv
+     *
+     * Anime Title S2E12.mp4
+     *
+     * Anime Title S10E105.mkv
+     *
+     * The title can contain spaces.
+     */
+    private data class AnimeFile(
+        val title: String,
+        val season: Int,
+        val episode: Int
+    )
+
+    private fun parseAnimeFilename(
+        filename: String
+    ): AnimeFile? {
+
+        /*
+         * Remove the file extension.
+         *
+         * Example:
+         *
+         * Re Zero S1E01.mkv
+         *
+         * becomes:
+         *
+         * Re Zero S1E01
+         */
+        val name =
+            filename
+                .substringBeforeLast(
+                    ".",
+                    filename
+                )
+                .trim()
+
+        /*
+         * Expected ending:
+         *
+         * S1E01
+         * S2E12
+         * S10E105
+         *
+         * Case-insensitive.
+         */
+        val regex =
+            Regex(
+                """^(.+?)\s+S(\d+)E(\d+)$""",
+                RegexOption.IGNORE_CASE
+            )
+
+        val match =
+            regex.matchEntire(name)
+                ?: return null
+
+        val title =
+            match.groupValues[1]
+                .trim()
+
+        val season =
+            match.groupValues[2]
+                .toIntOrNull()
+                ?: return null
+
+        val episode =
+            match.groupValues[3]
+                .toIntOrNull()
+                ?: return null
+
+        if (
+            title.isBlank() ||
+            season < 1 ||
+            episode < 1
+        ) {
+            return null
+        }
+
+        return AnimeFile(
+            title = title,
+            season = season,
+            episode = episode
+        )
+    }
+
+    /*
+     * =========================================================
+     * NEW TEST FUNCTION
+     * =========================================================
+     *
+     * This DOES NOT modify MAL.
+     *
+     * It only:
+     *
+     * 1. Parses the filename.
+     * 2. Searches MAL.
+     * 3. Shows the results.
+     */
+    private fun testFilename(
+        filename: String
+    ) {
+
+        val token =
+            requireToken()
+                ?: return
+
+        if (filename.isBlank()) {
+
+            status.text =
+                "Enter a filename."
+
+            return
+        }
+
+        val parsed =
+            parseAnimeFilename(filename)
+
+        if (parsed == null) {
+
+            status.text =
+                "Ignored: filename must use Anime Title S1E01 format."
+
+            return
+        }
+
+        status.text =
+            "Detected: ${parsed.title} — " +
+            "Season ${parsed.season}, " +
+            "Episode ${parsed.episode}"
+
+        scope.launch(Dispatchers.IO) {
+
+            try {
+
+                val results =
+                    api.search(
+                        token,
+                        parsed.title
+                    )
+
+                withContext(Dispatchers.Main) {
+
+                    if (results.isEmpty()) {
+
+                        /*
+                         * No MAL result.
+                         *
+                         * IMPORTANT:
+                         * Nothing is changed on MAL.
+                         */
+                        status.text =
+                            "No MAL anime found for \"${parsed.title}\". Ignored."
+
+                        return@withContext
+                    }
+
+                    val names =
+                        results.map { anime ->
+                            "${anime.id} — ${anime.title}"
+                        }
+
+                    AlertDialog.Builder(
+                        this@MainActivity
+                    )
+                        .setTitle(
+                            "Detected anime"
+                        )
+                        .setMessage(
+                            "Filename:\n$filename\n\n" +
+                            "Title: ${parsed.title}\n" +
+                            "Season: ${parsed.season}\n" +
+                            "Episode: ${parsed.episode}"
+                        )
+                        .setItems(
+                            names.toTypedArray()
+                        ) { _, which ->
+
+                            selected =
+                                results[which]
+
+                            status.text =
+                                "MAL match: ${results[which].title}\n" +
+                                "Season ${parsed.season}, " +
+                                "Episode ${parsed.episode}\n\n" +
+                                "TEST ONLY — MAL was not changed."
+                        }
+                        .show()
+                }
+
+            } catch (e: Exception) {
+
+                withContext(Dispatchers.Main) {
+
+                    status.text =
+                        "MAL search failed: ${e.message}"
+                }
+            }
+        }
+    }
+
+    /*
+     * Existing manual episode update.
+     */
     private fun markEpisode() {
 
         val token =
