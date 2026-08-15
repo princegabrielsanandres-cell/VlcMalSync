@@ -328,7 +328,7 @@ class MalApi(
                     "Authorization",
                     "Bearer $token"
                 )
-                .post(
+                .put(
                     builder.build()
                 )
                 .build()
