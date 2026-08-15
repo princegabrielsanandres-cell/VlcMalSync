@@ -51,6 +51,7 @@ class MainActivity : Activity() {
         )
 
     private lateinit var status: TextView
+    private lateinit var connection: TextView
 
     private val prefs by lazy {
         getSharedPreferences(
@@ -99,15 +100,10 @@ class MainActivity : Activity() {
         title.textSize =
             26f
 
-        val connection =
+        connection =
             TextView(this)
 
-        connection.text =
-            if (getToken() != null) {
-                "MAL connected ✓"
-            } else {
-                "MAL not connected"
-            }
+        updateConnectionText()
 
         connection.textSize =
             16f
@@ -172,6 +168,22 @@ class MainActivity : Activity() {
 
     /*
      * =========================================================
+     * CONNECTION STATUS
+     * =========================================================
+     */
+
+    private fun updateConnectionText() {
+
+        connection.text =
+            if (getToken() != null) {
+                "MAL connected ✓"
+            } else {
+                "MAL not connected"
+            }
+    }
+
+    /*
+     * =========================================================
      * OAUTH
      * =========================================================
      */
@@ -197,6 +209,8 @@ class MainActivity : Activity() {
             )
             .remove(PREF_TOKEN)
             .apply()
+
+        updateConnectionText()
 
         val uri =
             Uri.Builder()
@@ -277,6 +291,8 @@ class MainActivity : Activity() {
             status.text =
                 "MAL authorization failed:\n$description"
 
+            updateConnectionText()
+
             return
         }
 
@@ -288,6 +304,8 @@ class MainActivity : Activity() {
             status.text =
                 "MAL login failed:\n" +
                 "No authorization code."
+
+            updateConnectionText()
 
             return
         }
@@ -303,6 +321,8 @@ class MainActivity : Activity() {
             status.text =
                 "MAL login failed:\n" +
                 "Verifier missing."
+
+            updateConnectionText()
 
             return
         }
@@ -337,6 +357,8 @@ class MainActivity : Activity() {
                     Dispatchers.Main
                 ) {
 
+                    updateConnectionText()
+
                     status.text =
                         "MAL connected ✓"
                 }
@@ -346,6 +368,8 @@ class MainActivity : Activity() {
                 withContext(
                     Dispatchers.Main
                 ) {
+
+                    updateConnectionText()
 
                     status.text =
                         "Login failed:\n" +
@@ -378,6 +402,8 @@ class MainActivity : Activity() {
 
             status.text =
                 "Connect MAL first."
+
+            updateConnectionText()
         }
 
         return token
@@ -510,9 +536,6 @@ class MainActivity : Activity() {
                 /*
                  * If no season was specified, use 1 as the
                  * temporary testing value.
-                 *
-                 * Your required format normally includes S1E01,
-                 * so this mainly supports the parser's other formats.
                  */
                 val season =
                     parsed.season ?: 1
