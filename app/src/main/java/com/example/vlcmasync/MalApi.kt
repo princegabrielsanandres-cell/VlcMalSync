@@ -30,6 +30,12 @@ class MalApi(
     private val api =
         "https://api.myanimelist.net/v2"
 
+    /*
+     * =========================================================
+     * OAUTH TOKEN
+     * =========================================================
+     */
+
     fun token(
         cid: String,
         code: String,
@@ -42,7 +48,10 @@ class MalApi(
                 .add("client_id", cid)
                 .add("code", code)
                 .add("code_verifier", v)
-                .add("grant_type", "authorization_code")
+                .add(
+                    "grant_type",
+                    "authorization_code"
+                )
                 .add("redirect_uri", r)
                 .build()
 
@@ -59,7 +68,8 @@ class MalApi(
             .use { response ->
 
                 val text =
-                    response.body?.string().orEmpty()
+                    response.body?.string()
+                        .orEmpty()
 
                 if (!response.isSuccessful) {
                     error(text)
@@ -70,13 +80,22 @@ class MalApi(
             }
     }
 
+    /*
+     * =========================================================
+     * SEARCH ANIME
+     * =========================================================
+     */
+
     fun search(
         token: String,
         query: String
     ): List<MalAnime> {
 
         val encoded =
-            URLEncoder.encode(query, "UTF-8")
+            URLEncoder.encode(
+                query,
+                "UTF-8"
+            )
 
         val url =
             "$api/anime" +
@@ -84,7 +103,8 @@ class MalApi(
             "&limit=10" +
             "&fields=" +
             "id,title,alternative_titles," +
-            "num_episodes,start_date,end_date,media_type"
+            "num_episodes,start_date,end_date," +
+            "media_type"
 
         val request =
             Request.Builder()
@@ -100,10 +120,16 @@ class MalApi(
             .use { response ->
 
                 val text =
-                    response.body?.string().orEmpty()
+                    response.body?.string()
+                        .orEmpty()
 
                 if (!response.isSuccessful) {
-                    error(text)
+                    error(
+                        "MAL HTTP ${response.code}\n" +
+                        "URL: ${request.url}\n" +
+                        "METHOD: ${request.method}\n" +
+                        "BODY: $text"
+                    )
                 }
 
                 val data =
@@ -124,6 +150,9 @@ class MalApi(
                         if (
                             node.has(
                                 "alternative_titles"
+                            ) &&
+                            !node.isNull(
+                                "alternative_titles"
                             )
                         ) {
 
@@ -132,19 +161,28 @@ class MalApi(
                                     "alternative_titles"
                                 )
 
-                            if (alt.has("en")) {
+                            if (
+                                alt.has("en") &&
+                                !alt.isNull("en")
+                            ) {
                                 alternatives.add(
                                     alt.getString("en")
                                 )
                             }
 
-                            if (alt.has("ja")) {
+                            if (
+                                alt.has("ja") &&
+                                !alt.isNull("ja")
+                            ) {
                                 alternatives.add(
                                     alt.getString("ja")
                                 )
                             }
 
-                            if (alt.has("synonyms")) {
+                            if (
+                                alt.has("synonyms") &&
+                                !alt.isNull("synonyms")
+                            ) {
 
                                 val synonyms =
                                     alt.getJSONArray(
@@ -152,8 +190,10 @@ class MalApi(
                                     )
 
                                 for (
-                                    i in 0 until synonyms.length()
+                                    i in 0 until
+                                    synonyms.length()
                                 ) {
+
                                     alternatives.add(
                                         synonyms.getString(i)
                                     )
@@ -162,6 +202,7 @@ class MalApi(
                         }
 
                         MalAnime(
+
                             id =
                                 node.getInt("id"),
 
@@ -174,8 +215,10 @@ class MalApi(
                             type =
                                 node.optString(
                                     "media_type",
+                                    ""
+                                ).ifBlank {
                                     null
-                                ),
+                                },
 
                             episodes =
                                 if (
@@ -213,16 +256,35 @@ class MalApi(
             }
     }
 
+    /*
+     * =========================================================
+     * GET USER'S MAL STATUS FOR AN ANIME
+     *
+     * IMPORTANT:
+     *
+     * We do NOT use:
+     *
+     * /anime/{id}/my_list_status
+     *
+     * with GET.
+     *
+     * Instead we request the anime resource and ask MAL
+     * to include my_list_status.
+     * =========================================================
+     */
+
     fun getMyListStatus(
         token: String,
         animeId: Int
     ): MalListStatus? {
 
+        val url =
+            "$api/anime/$animeId" +
+            "?fields=my_list_status"
+
         val request =
             Request.Builder()
-                .url(
-                    "$api/anime/$animeId/my_list_status"
-                )
+                .url(url)
                 .header(
                     "Authorization",
                     "Bearer $token"
@@ -234,39 +296,54 @@ class MalApi(
             .use { response ->
 
                 val text =
-                    response.body?.string().orEmpty()
-
-                if (response.code == 404) {
-                    return null
-                }
+                    response.body?.string()
+                        .orEmpty()
 
                 if (!response.isSuccessful) {
-    error(
-        "MAL HTTP ${response.code}\n" +
-        "URL: ${request.url}\n" +
-        "METHOD: ${request.method}\n" +
-        "BODY: $text"
-    )
+
+                    error(
+                        "MAL HTTP ${response.code}\n" +
+                        "URL: ${request.url}\n" +
+                        "METHOD: ${request.method}\n" +
+                        "BODY: $text"
+                    )
                 }
 
                 val json =
                     JSONObject(text)
 
+                /*
+                 * If the anime isn't on the user's list,
+                 * MAL may omit my_list_status.
+                 */
+                if (
+                    !json.has("my_list_status") ||
+                    json.isNull("my_list_status")
+                ) {
+                    return null
+                }
+
+                val status =
+                    json.getJSONObject(
+                        "my_list_status"
+                    )
+
                 return MalListStatus(
+
                     status =
-                        json.optString(
+                        status.optString(
                             "status",
                             ""
                         ),
 
                     watchedEpisodes =
-                        json.optInt(
+                        status.optInt(
                             "num_episodes_watched",
                             0
                         ),
 
                     startDate =
-                        json.optString(
+                        status.optString(
                             "start_date",
                             ""
                         ).ifBlank {
@@ -274,7 +351,7 @@ class MalApi(
                         },
 
                     finishDate =
-                        json.optString(
+                        status.optString(
                             "finish_date",
                             ""
                         ).ifBlank {
@@ -283,6 +360,12 @@ class MalApi(
                 )
             }
     }
+
+    /*
+     * =========================================================
+     * UPDATE MAL LIST
+     * =========================================================
+     */
 
     fun updateListStatus(
         token: String,
@@ -297,6 +380,7 @@ class MalApi(
             FormBody.Builder()
 
         if (status != null) {
+
             builder.add(
                 "status",
                 status
@@ -304,6 +388,7 @@ class MalApi(
         }
 
         if (watchedEpisodes != null) {
+
             builder.add(
                 "num_watched_episodes",
                 watchedEpisodes.toString()
@@ -311,6 +396,7 @@ class MalApi(
         }
 
         if (startDate != null) {
+
             builder.add(
                 "start_date",
                 startDate
@@ -318,6 +404,7 @@ class MalApi(
         }
 
         if (finishDate != null) {
+
             builder.add(
                 "finish_date",
                 finishDate
@@ -333,7 +420,7 @@ class MalApi(
                     "Authorization",
                     "Bearer $token"
                 )
-                .patch(
+                .put(
                     builder.build()
                 )
                 .build()
@@ -343,18 +430,26 @@ class MalApi(
             .use { response ->
 
                 val text =
-                    response.body?.string().orEmpty()
+                    response.body?.string()
+                        .orEmpty()
 
                 if (!response.isSuccessful) {
-    error(
-        "MAL HTTP ${response.code}\n" +
-        "URL: ${request.url}\n" +
-        "METHOD: ${request.method}\n" +
-        "BODY: $text"
-    )
+
+                    error(
+                        "MAL HTTP ${response.code}\n" +
+                        "URL: ${request.url}\n" +
+                        "METHOD: ${request.method}\n" +
+                        "BODY: $text"
+                    )
                 }
             }
     }
+
+    /*
+     * =========================================================
+     * SIMPLE UPDATE
+     * =========================================================
+     */
 
     fun update(
         token: String,
