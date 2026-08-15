@@ -10,7 +10,7 @@ import java.security.*
 import java.util.Base64
 
 class MainActivity:Activity(){
- companion object{private const val CLIENT_ID="PUT_YOUR_MAL_CLIENT_ID_HERE";private const val REDIRECT="malvlcsync://oauth"}
+ companion object{private const val CLIENT_ID="9f0d8ade5b8a7922da3dafada0bc2153";private const val REDIRECT="malvlcsync://oauth"}
  private val api=MalApi(OkHttpClient());private val scope=CoroutineScope(SupervisorJob()+Dispatchers.Main)
  private lateinit var status:TextView;private var verifier:String?=null;private var selected:MalAnime?=null
  override fun onCreate(b:Bundle?){super.onCreate(b);handle(intent)
