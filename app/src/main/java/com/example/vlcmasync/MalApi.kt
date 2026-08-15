@@ -328,7 +328,7 @@ class MalApi(
                     "Authorization",
                     "Bearer $token"
                 )
-                .put(
+                .patch(
                     builder.build()
                 )
                 .build()
