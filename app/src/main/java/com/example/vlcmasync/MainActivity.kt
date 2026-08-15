@@ -30,6 +30,9 @@ class MainActivity : Activity() {
         private const val REDIRECT =
             "malvlcsync://oauth"
 
+        private const val PREFS =
+            "vlc_mal_sync"
+
         private const val PREF_VERIFIER =
             "pkce_verifier"
 
@@ -46,8 +49,19 @@ class MainActivity : Activity() {
 
     private var selected: MalAnime? = null
 
+    private val prefs by lazy {
+        getSharedPreferences(PREFS, MODE_PRIVATE)
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        buildUi()
+
+        handleIntent(intent)
+    }
+
+    private fun buildUi() {
 
         val box = LinearLayout(this)
         box.orientation = LinearLayout.VERTICAL
@@ -58,30 +72,43 @@ class MainActivity : Activity() {
         title.textSize = 25f
 
         status = TextView(this)
-        status.text = if (getToken() != null) {
-            "MAL connected ✓"
-        } else {
-            "MAL not connected"
-        }
+
+        status.text =
+            if (getToken() != null)
+                "MAL connected ✓"
+            else
+                "MAL not connected"
+
         status.textSize = 16f
 
         val login = Button(this)
-        login.text = "Connect MyAnimeList"
+
+        login.text =
+            "Connect MyAnimeList"
+
         login.setOnClickListener {
             loginToMal()
         }
 
         val query = EditText(this)
-        query.hint = "Anime title"
+
+        query.hint =
+            "Anime title"
 
         val find = Button(this)
-        find.text = "Find anime on MAL"
+
+        find.text =
+            "Find anime on MAL"
+
         find.setOnClickListener {
             searchAnime(query.text.toString())
         }
 
         val mark = Button(this)
-        mark.text = "Mark selected episode watched"
+
+        mark.text =
+            "Mark selected episode watched"
+
         mark.setOnClickListener {
             markEpisode()
         }
@@ -94,88 +121,128 @@ class MainActivity : Activity() {
         box.addView(mark)
 
         setContentView(box)
-
-        handleIntent(intent)
     }
 
     override fun onNewIntent(intent: Intent?) {
+
         super.onNewIntent(intent)
 
         if (intent != null) {
+
             setIntent(intent)
+
             handleIntent(intent)
         }
     }
 
     private fun loginToMal() {
 
-        val randomBytes = ByteArray(32)
+        /*
+         * Generate exactly ONE verifier for this login attempt.
+         */
 
-        SecureRandom().nextBytes(randomBytes)
+        val bytes =
+            ByteArray(32)
 
-        val verifier = Base64
-            .getUrlEncoder()
-            .withoutPadding()
-            .encodeToString(randomBytes)
+        SecureRandom().nextBytes(bytes)
 
-        getPreferences(0)
-            .edit()
-            .putString(PREF_VERIFIER, verifier)
+        val verifier =
+            Base64
+                .getUrlEncoder()
+                .withoutPadding()
+                .encodeToString(bytes)
+
+        /*
+         * Save the verifier BEFORE opening MAL.
+         */
+
+        prefs.edit()
+            .putString(
+                PREF_VERIFIER,
+                verifier
+            )
+            .remove(PREF_TOKEN)
             .apply()
 
-        val digest = MessageDigest
-            .getInstance("SHA-256")
-            .digest(verifier.toByteArray(Charsets.US_ASCII))
+        val digest =
+            MessageDigest
+                .getInstance("SHA-256")
+                .digest(
+                    verifier.toByteArray(
+                        Charsets.US_ASCII
+                    )
+                )
 
-        val challenge = Base64
-            .getUrlEncoder()
-            .withoutPadding()
-            .encodeToString(digest)
+        val challenge =
+            Base64
+                .getUrlEncoder()
+                .withoutPadding()
+                .encodeToString(digest)
 
-        val uri = Uri.Builder()
-            .scheme("https")
-            .authority("myanimelist.net")
-            .path("/v1/oauth2/authorize")
-            .appendQueryParameter("response_type", "code")
-            .appendQueryParameter("client_id", CLIENT_ID)
-            .appendQueryParameter("redirect_uri", REDIRECT)
-            .appendQueryParameter("code_challenge", challenge)
-            .appendQueryParameter("code_challenge_method", "S256")
-            .build()
+        val uri =
+            Uri.Builder()
+                .scheme("https")
+                .authority("myanimelist.net")
+                .path("/v1/oauth2/authorize")
+                .appendQueryParameter(
+                    "response_type",
+                    "code"
+                )
+                .appendQueryParameter(
+                    "client_id",
+                    CLIENT_ID
+                )
+                .appendQueryParameter(
+                    "redirect_uri",
+                    REDIRECT
+                )
+                .appendQueryParameter(
+                    "code_challenge",
+                    challenge
+                )
+                .appendQueryParameter(
+                    "code_challenge_method",
+                    "S256"
+                )
+                .build()
 
-        val intent = Intent(Intent.ACTION_VIEW, uri)
+        status.text =
+            "Opening MyAnimeList..."
 
-        startActivity(intent)
+        startActivity(
+            Intent(
+                Intent.ACTION_VIEW,
+                uri
+            )
+        )
     }
 
     private fun handleIntent(intent: Intent?) {
 
-        val data = intent?.data ?: return
+        val data =
+            intent?.data
+                ?: return
 
-        if (data.scheme != "malvlcsync") {
-            return
-        }
-
-        if (data.host != "oauth") {
-            return
-        }
-
-        val error = data.getQueryParameter("error")
-
-        if (!error.isNullOrBlank()) {
-
-            val description =
-                data.getQueryParameter("error_description")
-                    ?: error
-
-            status.text =
-                "MAL login cancelled: $description"
-
+        if (
+            data.scheme != "malvlcsync" ||
+            data.host != "oauth"
+        ) {
             return
         }
 
         val code =
             data.getQueryParameter("code")
+
+        val error =
+            data.getQueryParameter("error")
+
+        if (!error.isNullOrBlank()) {
+
+            status.text =
+                "MAL authorization failed: $error"
+
+            return
+        }
 
         if (code.isNullOrBlank()) {
 
@@ -185,20 +252,37 @@ class MainActivity : Activity() {
             return
         }
 
+        /*
+         * Retrieve the EXACT verifier that was generated
+         * before opening MAL.
+         */
+
         val verifier =
-            getPreferences(0)
-                .getString(PREF_VERIFIER, null)
+            prefs.getString(
+                PREF_VERIFIER,
+                null
+            )
 
         if (verifier.isNullOrBlank()) {
 
             status.text =
-                "MAL login failed: PKCE verifier missing."
+                "MAL login failed: verifier missing."
 
             return
         }
 
         status.text =
-            "Connecting to MyAnimeList..."
+            "Completing MAL login..."
+
+        /*
+         * Remove the verifier immediately so the same
+         * authorization callback cannot accidentally be
+         * processed twice.
+         */
+
+        prefs.edit()
+            .remove(PREF_VERIFIER)
+            .apply()
 
         scope.launch(Dispatchers.IO) {
 
@@ -212,13 +296,15 @@ class MainActivity : Activity() {
                         REDIRECT
                     )
 
-                getPreferences(0)
-                    .edit()
-                    .putString(PREF_TOKEN, token)
-                    .remove(PREF_VERIFIER)
+                prefs.edit()
+                    .putString(
+                        PREF_TOKEN,
+                        token
+                    )
                     .apply()
 
                 withContext(Dispatchers.Main) {
+
                     status.text =
                         "MAL connected ✓"
                 }
@@ -226,6 +312,7 @@ class MainActivity : Activity() {
             } catch (e: Exception) {
 
                 withContext(Dispatchers.Main) {
+
                     status.text =
                         "Login failed: ${e.message}"
                 }
@@ -235,15 +322,19 @@ class MainActivity : Activity() {
 
     private fun getToken(): String? {
 
-        return getPreferences(0)
-            .getString(PREF_TOKEN, null)
+        return prefs.getString(
+            PREF_TOKEN,
+            null
+        )
     }
 
     private fun requireToken(): String? {
 
-        val token = getToken()
+        val token =
+            getToken()
 
         if (token == null) {
+
             status.text =
                 "Connect MAL first."
         }
@@ -253,8 +344,9 @@ class MainActivity : Activity() {
 
     private fun searchAnime(query: String) {
 
-        val token = requireToken()
-            ?: return
+        val token =
+            requireToken()
+                ?: return
 
         if (query.isBlank()) {
 
@@ -272,7 +364,10 @@ class MainActivity : Activity() {
             try {
 
                 val results =
-                    api.search(token, query)
+                    api.search(
+                        token,
+                        query
+                    )
 
                 withContext(Dispatchers.Main) {
 
@@ -288,8 +383,12 @@ class MainActivity : Activity() {
                                 "${anime.id} — ${anime.title}"
                             }
 
-                        AlertDialog.Builder(this@MainActivity)
-                            .setTitle("Choose MAL match")
+                        AlertDialog.Builder(
+                            this@MainActivity
+                        )
+                            .setTitle(
+                                "Choose MAL match"
+                            )
                             .setItems(
                                 names.toTypedArray()
                             ) { _, which ->
@@ -307,6 +406,7 @@ class MainActivity : Activity() {
             } catch (e: Exception) {
 
                 withContext(Dispatchers.Main) {
+
                     status.text =
                         "Search failed: ${e.message}"
                 }
@@ -331,7 +431,8 @@ class MainActivity : Activity() {
             return
         }
 
-        val input = EditText(this)
+        val input =
+            EditText(this)
 
         input.hint =
             "Episode number"
@@ -340,7 +441,9 @@ class MainActivity : Activity() {
             InputType.TYPE_CLASS_NUMBER
 
         AlertDialog.Builder(this)
-            .setTitle("Mark watched")
+            .setTitle(
+                "Mark watched"
+            )
             .setView(input)
             .setNegativeButton(
                 "Cancel",
@@ -355,7 +458,10 @@ class MainActivity : Activity() {
                         .toString()
                         .toIntOrNull()
 
-                if (episode == null || episode < 0) {
+                if (
+                    episode == null ||
+                    episode < 0
+                ) {
 
                     status.text =
                         "Invalid episode."
@@ -363,7 +469,9 @@ class MainActivity : Activity() {
                     return@setPositiveButton
                 }
 
-                scope.launch(Dispatchers.IO) {
+                scope.launch(
+                    Dispatchers.IO
+                ) {
 
                     try {
 
@@ -373,14 +481,20 @@ class MainActivity : Activity() {
                             episode
                         )
 
-                        withContext(Dispatchers.Main) {
+                        withContext(
+                            Dispatchers.Main
+                        ) {
+
                             status.text =
                                 "✓ ${anime.title}: episode $episode synced"
                         }
 
                     } catch (e: Exception) {
 
-                        withContext(Dispatchers.Main) {
+                        withContext(
+                            Dispatchers.Main
+                        ) {
+
                             status.text =
                                 "Update failed: ${e.message}"
                         }
