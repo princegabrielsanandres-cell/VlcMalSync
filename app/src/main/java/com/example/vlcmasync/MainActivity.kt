@@ -17,7 +17,6 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
-import java.security.MessageDigest
 import java.security.SecureRandom
 import java.util.Base64
 
@@ -43,7 +42,9 @@ class MainActivity : Activity() {
     private val api = MalApi(OkHttpClient())
 
     private val scope =
-        CoroutineScope(SupervisorJob() + Dispatchers.Main)
+        CoroutineScope(
+            SupervisorJob() + Dispatchers.Main
+        )
 
     private lateinit var status: TextView
 
@@ -74,40 +75,33 @@ class MainActivity : Activity() {
         status = TextView(this)
 
         status.text =
-            if (getToken() != null)
+            if (getToken() != null) {
                 "MAL connected ✓"
-            else
+            } else {
                 "MAL not connected"
+            }
 
         status.textSize = 16f
 
         val login = Button(this)
-
-        login.text =
-            "Connect MyAnimeList"
+        login.text = "Connect MyAnimeList"
 
         login.setOnClickListener {
             loginToMal()
         }
 
         val query = EditText(this)
-
-        query.hint =
-            "Anime title"
+        query.hint = "Anime title"
 
         val find = Button(this)
-
-        find.text =
-            "Find anime on MAL"
+        find.text = "Find anime on MAL"
 
         find.setOnClickListener {
             searchAnime(query.text.toString())
         }
 
         val mark = Button(this)
-
-        mark.text =
-            "Mark selected episode watched"
+        mark.text = "Mark selected episode watched"
 
         mark.setOnClickListener {
             markEpisode()
@@ -124,87 +118,65 @@ class MainActivity : Activity() {
     }
 
     override fun onNewIntent(intent: Intent?) {
-
         super.onNewIntent(intent)
 
         if (intent != null) {
-
             setIntent(intent)
-
             handleIntent(intent)
         }
     }
 
     private fun loginToMal() {
 
-        /*
-         * Generate exactly ONE verifier for this login attempt.
-         */
-
-        val bytes =
-            ByteArray(32)
+        val bytes = ByteArray(32)
 
         SecureRandom().nextBytes(bytes)
 
-        val verifier =
-            Base64
-                .getUrlEncoder()
-                .withoutPadding()
-                .encodeToString(bytes)
+        val verifier = Base64
+            .getUrlEncoder()
+            .withoutPadding()
+            .encodeToString(bytes)
 
         /*
-         * Save the verifier BEFORE opening MAL.
+         * Save the exact verifier that will be used
+         * when exchanging the authorization code.
          */
-
         prefs.edit()
-            .putString(
-                PREF_VERIFIER,
-                verifier
-            )
+            .putString(PREF_VERIFIER, verifier)
             .remove(PREF_TOKEN)
             .apply()
 
-        val digest =
-            MessageDigest
-                .getInstance("SHA-256")
-                .digest(
-                    verifier.toByteArray(
-                        Charsets.US_ASCII
-                    )
-                )
+        /*
+         * MAL OAuth uses the verifier itself as the
+         * code challenge with the plain method.
+         */
+        val challenge = verifier
 
-        val challenge =
-            Base64
-                .getUrlEncoder()
-                .withoutPadding()
-                .encodeToString(digest)
-
-        val uri =
-            Uri.Builder()
-                .scheme("https")
-                .authority("myanimelist.net")
-                .path("/v1/oauth2/authorize")
-                .appendQueryParameter(
-                    "response_type",
-                    "code"
-                )
-                .appendQueryParameter(
-                    "client_id",
-                    CLIENT_ID
-                )
-                .appendQueryParameter(
-                    "redirect_uri",
-                    REDIRECT
-                )
-                .appendQueryParameter(
-                    "code_challenge",
-                    challenge
-                )
-                .appendQueryParameter(
-                    "code_challenge_method",
-                    "S256"
-                )
-                .build()
+        val uri = Uri.Builder()
+            .scheme("https")
+            .authority("myanimelist.net")
+            .path("/v1/oauth2/authorize")
+            .appendQueryParameter(
+                "response_type",
+                "code"
+            )
+            .appendQueryParameter(
+                "client_id",
+                CLIENT_ID
+            )
+            .appendQueryParameter(
+                "redirect_uri",
+                REDIRECT
+            )
+            .appendQueryParameter(
+                "code_challenge",
+                challenge
+            )
+            .appendQueryParameter(
+                "code_challenge_method",
+                "plain"
+            )
+            .build()
 
         status.text =
             "Opening MyAnimeList..."
@@ -219,9 +191,7 @@ class MainActivity : Activity() {
 
     private fun handleIntent(intent: Intent?) {
 
-        val data =
-            intent?.data
-                ?: return
+        val data = intent?.data ?: return
 
         if (
             data.scheme != "malvlcsync" ||
@@ -230,19 +200,24 @@ class MainActivity : Activity() {
             return
         }
 
-        val code =
-            data.getQueryParameter("code")
-
         val error =
             data.getQueryParameter("error")
 
         if (!error.isNullOrBlank()) {
 
+            val description =
+                data.getQueryParameter(
+                    "error_description"
+                ) ?: error
+
             status.text =
-                "MAL authorization failed: $error"
+                "MAL authorization failed: $description"
 
             return
         }
+
+        val code =
+            data.getQueryParameter("code")
 
         if (code.isNullOrBlank()) {
 
@@ -253,10 +228,8 @@ class MainActivity : Activity() {
         }
 
         /*
-         * Retrieve the EXACT verifier that was generated
-         * before opening MAL.
+         * Get the exact verifier saved before opening MAL.
          */
-
         val verifier =
             prefs.getString(
                 PREF_VERIFIER,
@@ -275,11 +248,9 @@ class MainActivity : Activity() {
             "Completing MAL login..."
 
         /*
-         * Remove the verifier immediately so the same
-         * authorization callback cannot accidentally be
-         * processed twice.
+         * Prevent this authorization code from being
+         * accidentally processed twice.
          */
-
         prefs.edit()
             .remove(PREF_VERIFIER)
             .apply()
@@ -304,7 +275,6 @@ class MainActivity : Activity() {
                     .apply()
 
                 withContext(Dispatchers.Main) {
-
                     status.text =
                         "MAL connected ✓"
                 }
@@ -312,7 +282,6 @@ class MainActivity : Activity() {
             } catch (e: Exception) {
 
                 withContext(Dispatchers.Main) {
-
                     status.text =
                         "Login failed: ${e.message}"
                 }
@@ -330,11 +299,9 @@ class MainActivity : Activity() {
 
     private fun requireToken(): String? {
 
-        val token =
-            getToken()
+        val token = getToken()
 
         if (token == null) {
-
             status.text =
                 "Connect MAL first."
         }
@@ -431,8 +398,7 @@ class MainActivity : Activity() {
             return
         }
 
-        val input =
-            EditText(this)
+        val input = EditText(this)
 
         input.hint =
             "Episode number"
@@ -441,9 +407,7 @@ class MainActivity : Activity() {
             InputType.TYPE_CLASS_NUMBER
 
         AlertDialog.Builder(this)
-            .setTitle(
-                "Mark watched"
-            )
+            .setTitle("Mark watched")
             .setView(input)
             .setNegativeButton(
                 "Cancel",
@@ -469,9 +433,7 @@ class MainActivity : Activity() {
                     return@setPositiveButton
                 }
 
-                scope.launch(
-                    Dispatchers.IO
-                ) {
+                scope.launch(Dispatchers.IO) {
 
                     try {
 
@@ -484,7 +446,6 @@ class MainActivity : Activity() {
                         withContext(
                             Dispatchers.Main
                         ) {
-
                             status.text =
                                 "✓ ${anime.title}: episode $episode synced"
                         }
@@ -494,7 +455,6 @@ class MainActivity : Activity() {
                         withContext(
                             Dispatchers.Main
                         ) {
-
                             status.text =
                                 "Update failed: ${e.message}"
                         }
