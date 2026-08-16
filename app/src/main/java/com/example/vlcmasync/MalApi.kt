@@ -16,6 +16,23 @@ data class MalAnime(
     val endDate: String?
 )
 
+data class MalRelatedAnime(
+    val id: Int,
+    val title: String,
+    val relation: String?
+)
+
+data class MalAnimeDetails(
+    val id: Int,
+    val title: String,
+    val episodes: Int?,
+    val startDate: String?,
+    val endDate: String?,
+    val startSeason: String?,
+    val startYear: Int?,
+    val relatedAnime: List<MalRelatedAnime>
+)
+
 data class MalListStatus(
     val status: String,
     val watchedEpisodes: Int,
@@ -48,10 +65,7 @@ class MalApi(
                 .add("client_id", cid)
                 .add("code", code)
                 .add("code_verifier", v)
-                .add(
-                    "grant_type",
-                    "authorization_code"
-                )
+                .add("grant_type", "authorization_code")
                 .add("redirect_uri", r)
                 .build()
 
@@ -68,11 +82,12 @@ class MalApi(
             .use { response ->
 
                 val text =
-                    response.body?.string()
-                        .orEmpty()
+                    response.body?.string().orEmpty()
 
                 if (!response.isSuccessful) {
-                    error(text)
+                    error(
+                        "MAL HTTP ${response.code}\n$text"
+                    )
                 }
 
                 return JSONObject(text)
@@ -92,10 +107,7 @@ class MalApi(
     ): List<MalAnime> {
 
         val encoded =
-            URLEncoder.encode(
-                query,
-                "UTF-8"
-            )
+            URLEncoder.encode(query, "UTF-8")
 
         val url =
             "$api/anime" +
@@ -120,8 +132,7 @@ class MalApi(
             .use { response ->
 
                 val text =
-                    response.body?.string()
-                        .orEmpty()
+                    response.body?.string().orEmpty()
 
                 if (!response.isSuccessful) {
                     error(
@@ -148,12 +159,8 @@ class MalApi(
                             mutableListOf<String>()
 
                         if (
-                            node.has(
-                                "alternative_titles"
-                            ) &&
-                            !node.isNull(
-                                "alternative_titles"
-                            )
+                            node.has("alternative_titles") &&
+                            !node.isNull("alternative_titles")
                         ) {
 
                             val alt =
@@ -190,10 +197,8 @@ class MalApi(
                                     )
 
                                 for (
-                                    i in 0 until
-                                    synonyms.length()
+                                    i in 0 until synonyms.length()
                                 ) {
-
                                     alternatives.add(
                                         synonyms.getString(i)
                                     )
@@ -202,7 +207,6 @@ class MalApi(
                         }
 
                         MalAnime(
-
                             id =
                                 node.getInt("id"),
 
@@ -222,12 +226,8 @@ class MalApi(
 
                             episodes =
                                 if (
-                                    node.has(
-                                        "num_episodes"
-                                    ) &&
-                                    !node.isNull(
-                                        "num_episodes"
-                                    )
+                                    node.has("num_episodes") &&
+                                    !node.isNull("num_episodes")
                                 ) {
                                     node.getInt(
                                         "num_episodes"
@@ -258,18 +258,225 @@ class MalApi(
 
     /*
      * =========================================================
-     * GET USER'S MAL STATUS FOR AN ANIME
+     * GET ANIME DETAILS + RELATED ANIME
+     * =========================================================
      *
-     * IMPORTANT:
+     * This is the new part.
      *
-     * We do NOT use:
+     * We ask MAL for:
      *
-     * /anime/{id}/my_list_status
+     * - episode count
+     * - dates
+     * - start season
+     * - start year
+     * - related anime
      *
-     * with GET.
-     *
-     * Instead we request the anime resource and ask MAL
-     * to include my_list_status.
+     * MalTracker will use this later to resolve S1/S2/S3.
+     */
+
+    fun getAnimeDetails(
+        token: String,
+        animeId: Int
+    ): MalAnimeDetails {
+
+        val url =
+            "$api/anime/$animeId" +
+            "?fields=" +
+            "id,title,num_episodes," +
+            "start_date,end_date," +
+            "start_season,start_year," +
+            "related_anime"
+
+        val request =
+            Request.Builder()
+                .url(url)
+                .header(
+                    "Authorization",
+                    "Bearer $token"
+                )
+                .build()
+
+        c.newCall(request)
+            .execute()
+            .use { response ->
+
+                val text =
+                    response.body?.string().orEmpty()
+
+                if (!response.isSuccessful) {
+
+                    error(
+                        "MAL HTTP ${response.code}\n" +
+                        "URL: ${request.url}\n" +
+                        "METHOD: ${request.method}\n" +
+                        "BODY: $text"
+                    )
+                }
+
+                val json =
+                    JSONObject(text)
+
+                val related =
+                    mutableListOf<MalRelatedAnime>()
+
+                /*
+                 * MAL may omit related_anime when there
+                 * are no relationships.
+                 */
+
+                if (
+                    json.has("related_anime") &&
+                    !json.isNull("related_anime")
+                ) {
+
+                    val array =
+                        json.getJSONArray(
+                            "related_anime"
+                        )
+
+                    for (
+                        i in 0 until array.length()
+                    ) {
+
+                        val item =
+                            array.getJSONObject(i)
+
+                        /*
+                         * Relationship structure:
+                         *
+                         * {
+                         *   "node": {
+                         *      "id": ...,
+                         *      "title": ...
+                         *   },
+                         *   "relation_type": "sequel"
+                         * }
+                         */
+
+                        val node =
+                            item.optJSONObject("node")
+
+                        if (node != null) {
+
+                            val id =
+                                node.optInt(
+                                    "id",
+                                    -1
+                                )
+
+                            val title =
+                                node.optString(
+                                    "title",
+                                    ""
+                                )
+
+                            if (
+                                id > 0 &&
+                                title.isNotBlank()
+                            ) {
+
+                                related.add(
+                                    MalRelatedAnime(
+                                        id = id,
+                                        title = title,
+                                        relation =
+                                            item.optString(
+                                                "relation_type",
+                                                ""
+                                            ).ifBlank {
+                                                null
+                                            }
+                                    )
+                                )
+                            }
+                        }
+                    }
+                }
+
+                val startSeason =
+                    if (
+                        json.has("start_season") &&
+                        !json.isNull("start_season")
+                    ) {
+
+                        json.getJSONObject(
+                            "start_season"
+                        )
+                            .optString(
+                                "season",
+                                ""
+                            )
+                            .ifBlank {
+                                null
+                            }
+
+                    } else {
+                        null
+                    }
+
+                val startYear =
+                    if (
+                        json.has("start_year") &&
+                        !json.isNull("start_year")
+                    ) {
+                        json.getInt(
+                            "start_year"
+                        )
+                    } else {
+                        null
+                    }
+
+                return MalAnimeDetails(
+
+                    id =
+                        json.getInt("id"),
+
+                    title =
+                        json.getString("title"),
+
+                    episodes =
+                        if (
+                            json.has("num_episodes") &&
+                            !json.isNull("num_episodes")
+                        ) {
+                            json.getInt(
+                                "num_episodes"
+                            )
+                        } else {
+                            null
+                        },
+
+                    startDate =
+                        json.optString(
+                            "start_date",
+                            ""
+                        ).ifBlank {
+                            null
+                        },
+
+                    endDate =
+                        json.optString(
+                            "end_date",
+                            ""
+                        ).ifBlank {
+                            null
+                        },
+
+                    startSeason =
+                        startSeason,
+
+                    startYear =
+                        startYear,
+
+                    relatedAnime =
+                        related
+                )
+            }
+    }
+
+    /*
+     * =========================================================
+     * GET USER'S MAL STATUS
      * =========================================================
      */
 
@@ -296,8 +503,7 @@ class MalApi(
             .use { response ->
 
                 val text =
-                    response.body?.string()
-                        .orEmpty()
+                    response.body?.string().orEmpty()
 
                 if (!response.isSuccessful) {
 
@@ -312,10 +518,6 @@ class MalApi(
                 val json =
                     JSONObject(text)
 
-                /*
-                 * If the anime isn't on the user's list,
-                 * MAL may omit my_list_status.
-                 */
                 if (
                     !json.has("my_list_status") ||
                     json.isNull("my_list_status")
