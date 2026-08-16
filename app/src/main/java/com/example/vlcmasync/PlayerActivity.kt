@@ -30,9 +30,7 @@ class PlayerActivity : Activity(),
         super.onCreate(savedInstanceState)
 
         videoUri =
-            intent.getParcelableExtra(
-                "video_uri"
-            )
+            intent.getParcelableExtra("video_uri")
 
         if (videoUri == null) {
             finish()
@@ -40,26 +38,21 @@ class PlayerActivity : Activity(),
         }
 
         buildUi()
-
         initializePlayer()
     }
 
     private fun buildUi() {
 
-        val root =
-            FrameLayout(this)
+        val root = FrameLayout(this)
 
-        surfaceView =
-            SurfaceView(this)
+        surfaceView = SurfaceView(this)
 
-        status =
-            TextView(this)
+        status = TextView(this)
 
         status.text =
             "Loading video..."
 
-        status.textSize =
-            16f
+        status.textSize = 16f
 
         root.addView(
             surfaceView,
@@ -79,15 +72,17 @@ class PlayerActivity : Activity(),
 
         setContentView(root)
 
-        surfaceView
-            .holder
-            .addCallback(this)
+        surfaceView.holder.addCallback(this)
     }
 
     private fun initializePlayer() {
 
         val options =
-            ArrayList<String>()
+            arrayListOf(
+                "--no-drop-late-frames",
+                "--no-skip-frames",
+                "--network-caching=150"
+            )
 
         libVLC =
             LibVLC(
@@ -102,10 +97,31 @@ class PlayerActivity : Activity(),
 
             when (event.type) {
 
+                MediaPlayer.Event.Opening -> {
+
+                    runOnUiThread {
+                        status.visibility =
+                            View.VISIBLE
+
+                        status.text =
+                            "Opening video..."
+                    }
+                }
+
+                MediaPlayer.Event.Buffering -> {
+
+                    runOnUiThread {
+                        status.visibility =
+                            View.VISIBLE
+
+                        status.text =
+                            "Buffering ${event.buffering.toInt()}%"
+                    }
+                }
+
                 MediaPlayer.Event.Playing -> {
 
                     runOnUiThread {
-
                         status.visibility =
                             View.GONE
                     }
@@ -115,8 +131,7 @@ class PlayerActivity : Activity(),
 
                     if (!videoFinished) {
 
-                        videoFinished =
-                            true
+                        videoFinished = true
 
                         runOnUiThread {
 
@@ -139,7 +154,9 @@ class PlayerActivity : Activity(),
                             View.VISIBLE
 
                         status.text =
-                            "Unable to play video."
+                            "Unable to play video.\n\n" +
+                            "URI:\n" +
+                            videoUri
                     }
                 }
             }
@@ -150,16 +167,12 @@ class PlayerActivity : Activity(),
         holder: SurfaceHolder
     ) {
 
-        mediaPlayer
-            .vlcVout
-            .setVideoSurface(
-                holder.surface,
-                holder
-            )
+        mediaPlayer.vlcVout.setVideoSurface(
+            holder.surface,
+            holder
+        )
 
-        mediaPlayer
-            .vlcVout
-            .attachViews()
+        mediaPlayer.vlcVout.attachViews()
 
         startVideo()
     }
@@ -170,30 +183,47 @@ class PlayerActivity : Activity(),
             videoUri
                 ?: return
 
-        val media =
-            Media(
-                libVLC,
-                uri
+        try {
+
+            status.visibility =
+                View.VISIBLE
+
+            status.text =
+                "Opening:\n" +
+                (uri.lastPathSegment
+                    ?: "video")
+
+            val media =
+                Media(
+                    libVLC,
+                    uri
+                )
+
+            /*
+             * Tell VLC that this is a local Android
+             * document rather than a network stream.
+             */
+            media.addOption(
+                ":network-caching=150"
             )
 
-        mediaPlayer.media =
-            media
+            mediaPlayer.media =
+                media
 
-        media.release()
+            media.release()
 
-        mediaPlayer.play()
+            mediaPlayer.play()
+
+        } catch (e: Exception) {
+
+            status.visibility =
+                View.VISIBLE
+
+            status.text =
+                "Player error:\n\n" +
+                (e.message ?: "Unknown error")
+        }
     }
-
-    /*
-     * =========================================================
-     * EPISODE FINISHED
-     * =========================================================
-     *
-     * This is where the MAL synchronization will happen.
-     *
-     * We intentionally wait until LibVLC reports
-     * EndReached.
-     */
 
     private fun onEpisodeFinished() {
 
@@ -206,14 +236,10 @@ class PlayerActivity : Activity(),
                 ?: return
 
         /*
-         * Don't sync yet.
+         * MAL synchronization will be connected here.
          *
-         * The next step will connect this filename to:
-         *
-         * AnimeParser
-         *      ↓
-         * MAL search
-         *      ↓
+         * filename →
+         * AnimeParser →
          * MalTracker
          */
     }
@@ -224,21 +250,22 @@ class PlayerActivity : Activity(),
         width: Int,
         height: Int
     ) {
-        // Nothing required here.
     }
 
     override fun surfaceDestroyed(
         holder: SurfaceHolder
     ) {
 
-        mediaPlayer
-            .vlcVout
-            .detachViews()
+        if (::mediaPlayer.isInitialized) {
+
+            mediaPlayer.vlcVout.detachViews()
+        }
     }
 
     override fun onStop() {
 
         if (::mediaPlayer.isInitialized) {
+
             mediaPlayer.stop()
         }
 
@@ -248,10 +275,12 @@ class PlayerActivity : Activity(),
     override fun onDestroy() {
 
         if (::mediaPlayer.isInitialized) {
+
             mediaPlayer.release()
         }
 
         if (::libVLC.isInitialized) {
+
             libVLC.release()
         }
 
