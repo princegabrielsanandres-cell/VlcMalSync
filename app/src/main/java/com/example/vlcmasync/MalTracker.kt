@@ -25,6 +25,156 @@ class MalTracker(
         ).format(Date())
     }
 
+    /*
+     * =========================================================
+     * FIND THE MAL ENTRY FOR THE REQUESTED SEASON
+     * =========================================================
+     *
+     * S1:
+     *   Use the original MAL search result.
+     *
+     * S2+:
+     *   Follow MAL's "sequel" relationships.
+     *
+     * Example:
+     *
+     * Re:Zero S1
+     *      ↓ sequel
+     * Re:Zero S2
+     *      ↓ sequel
+     * Re:Zero S3
+     *
+     * We follow the chain until the requested season.
+     */
+
+    private fun resolveSeason(
+        token: String,
+        anime: MalAnime,
+        requestedSeason: Int
+    ): MalAnime {
+
+        if (requestedSeason <= 1) {
+            return anime
+        }
+
+        var current =
+            anime
+
+        var currentSeason =
+            1
+
+        /*
+         * Prevent an accidental infinite relationship loop.
+         */
+        val visited =
+            mutableSetOf<Int>()
+
+        while (
+            currentSeason < requestedSeason
+        ) {
+
+            if (
+                !visited.add(current.id)
+            ) {
+                break
+            }
+
+            val details =
+                api.getAnimeDetails(
+                    token,
+                    current.id
+                )
+
+            /*
+             * Find the direct sequel.
+             */
+            val sequel =
+                details.relatedAnime
+                    .firstOrNull {
+                        it.relation.equals(
+                            "sequel",
+                            ignoreCase = true
+                        )
+                    }
+
+            if (sequel == null) {
+                /*
+                 * MAL doesn't have another sequel
+                 * relationship, so we can't safely guess.
+                 */
+                break
+            }
+
+            /*
+             * Fetch the actual MAL information for
+             * the sequel.
+             *
+             * Search by its exact MAL title so we get
+             * the full MalAnime object required by the
+             * existing tracker.
+             */
+            val candidates =
+                api.search(
+                    token,
+                    sequel.title
+                )
+
+            val wanted =
+                normalizeTitle(
+                    sequel.title
+                )
+
+            val next =
+                candidates.firstOrNull {
+                    normalizeTitle(
+                        it.title
+                    ) == wanted
+                }
+
+            if (next == null) {
+                break
+            }
+
+            current =
+                next
+
+            currentSeason++
+        }
+
+        /*
+         * If we successfully reached the requested season,
+         * return it.
+         *
+         * Otherwise return the original anime rather than
+         * silently choosing some unrelated MAL entry.
+         */
+        return if (
+            currentSeason == requestedSeason
+        ) {
+            current
+        } else {
+            anime
+        }
+    }
+
+    private fun normalizeTitle(
+        title: String
+    ): String {
+
+        return title
+            .lowercase()
+            .replace(
+                Regex("[^a-z0-9]+"),
+                ""
+            )
+    }
+
+    /*
+     * =========================================================
+     * TRACK EPISODE
+     * =========================================================
+     */
+
     suspend fun trackEpisode(
         token: String,
         anime: MalAnime,
@@ -32,13 +182,30 @@ class MalTracker(
         episode: Int
     ): TrackResult {
 
+        /*
+         * IMPORTANT:
+         *
+         * Resolve the season BEFORE checking MAL progress.
+         *
+         * This means S1 and S2 get separate MAL IDs and
+         * therefore separate episode progress.
+         */
+
+        val targetAnime =
+            resolveSeason(
+                token = token,
+                anime = anime,
+                requestedSeason = season
+            )
+
         val current =
             api.getMyListStatus(
                 token,
-                anime.id
+                targetAnime.id
             )
 
-        val date = today()
+        val date =
+            today()
 
         /*
          * =====================================================
@@ -49,7 +216,7 @@ class MalTracker(
         if (current == null) {
 
             val totalEpisodes =
-                anime.episodes
+                targetAnime.episodes
 
             val isCompleted =
                 totalEpisodes != null &&
@@ -65,7 +232,7 @@ class MalTracker(
 
             api.updateListStatus(
                 token = token,
-                animeId = anime.id,
+                animeId = targetAnime.id,
                 status = status,
                 watchedEpisodes = episode,
                 startDate = date,
@@ -78,13 +245,26 @@ class MalTracker(
             )
 
             return TrackResult(
-                animeTitle = anime.title,
-                season = season,
-                episode = episode,
-                status = status,
-                watchedEpisodes = episode,
-                started = true,
-                completed = isCompleted
+                animeTitle =
+                    targetAnime.title,
+
+                season =
+                    season,
+
+                episode =
+                    episode,
+
+                status =
+                    status,
+
+                watchedEpisodes =
+                    episode,
+
+                started =
+                    true,
+
+                completed =
+                    isCompleted
             )
         }
 
@@ -100,13 +280,8 @@ class MalTracker(
                 episode
             )
 
-        /*
-         * We need to determine whether the MAL entry should
-         * be Watching or Completed.
-         */
-
         val totalEpisodes =
-            anime.episodes
+            targetAnime.episodes
 
         val shouldBeCompleted =
             totalEpisodes != null &&
@@ -114,17 +289,21 @@ class MalTracker(
             newProgress >= totalEpisodes
 
         /*
-         * If MAL says Completed already, don't move it back
-         * to Watching just because another filename was tested.
-         *
-         * Season-specific handling will be added separately.
+         * Never move an already-completed anime back
+         * to Watching.
          */
 
         val targetStatus =
-            if (current.status == "completed") {
+            if (
+                current.status == "completed"
+            ) {
                 "completed"
-            } else if (shouldBeCompleted) {
+
+            } else if (
+                shouldBeCompleted
+            ) {
                 "completed"
+
             } else {
                 "watching"
             }
@@ -133,10 +312,6 @@ class MalTracker(
          * =====================================================
          * START DATE
          * =====================================================
-         *
-         * If the anime has no start date, add today's date.
-         *
-         * If it already has one, preserve it.
          */
 
         val needsStartDate =
@@ -146,11 +321,6 @@ class MalTracker(
          * =====================================================
          * FINISH DATE
          * =====================================================
-         *
-         * Only add a finish date when the anime becomes
-         * completed.
-         *
-         * Never overwrite an existing finish date.
          */
 
         val needsFinishDate =
@@ -159,24 +329,21 @@ class MalTracker(
 
         /*
          * =====================================================
-         * DO WE ACTUALLY NEED TO UPDATE MAL?
+         * CHECK WHETHER ANYTHING CHANGED
          * =====================================================
          */
 
         val progressChanged =
-            newProgress != current.watchedEpisodes
+            newProgress !=
+            current.watchedEpisodes
 
         val statusChanged =
-            targetStatus != current.status
+            targetStatus !=
+            current.status
 
         val dateChanged =
             needsStartDate ||
             needsFinishDate
-
-        /*
-         * If absolutely nothing changed, don't send a
-         * useless request to MAL.
-         */
 
         if (
             !progressChanged &&
@@ -185,15 +352,27 @@ class MalTracker(
         ) {
 
             return TrackResult(
-                animeTitle = anime.title,
-                season = season,
-                episode = episode,
-                status = current.status,
+                animeTitle =
+                    targetAnime.title,
+
+                season =
+                    season,
+
+                episode =
+                    episode,
+
+                status =
+                    current.status,
+
                 watchedEpisodes =
                     current.watchedEpisodes,
-                started = false,
+
+                started =
+                    false,
+
                 completed =
-                    current.status == "completed"
+                    current.status ==
+                    "completed"
             )
         }
 
@@ -204,8 +383,12 @@ class MalTracker(
          */
 
         api.updateListStatus(
-            token = token,
-            animeId = anime.id,
+
+            token =
+                token,
+
+            animeId =
+                targetAnime.id,
 
             status =
                 if (statusChanged) {
@@ -237,18 +420,29 @@ class MalTracker(
         )
 
         return TrackResult(
-            animeTitle = anime.title,
-            season = season,
-            episode = episode,
-            status = targetStatus,
-            watchedEpisodes = newProgress,
+
+            animeTitle =
+                targetAnime.title,
+
+            season =
+                season,
+
+            episode =
+                episode,
+
+            status =
+                targetStatus,
+
+            watchedEpisodes =
+                newProgress,
 
             started =
                 needsStartDate ||
                 statusChanged,
 
             completed =
-                targetStatus == "completed"
+                targetStatus ==
+                "completed"
         )
     }
 }
