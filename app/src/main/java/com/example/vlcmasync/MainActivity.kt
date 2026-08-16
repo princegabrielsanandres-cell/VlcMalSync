@@ -5,7 +5,6 @@ import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
 import android.widget.Button
-import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.TextView
 import kotlinx.coroutines.CoroutineScope
@@ -36,14 +35,13 @@ class MainActivity : Activity() {
 
         private const val PREF_TOKEN =
             "token"
+
+        private const val PICK_VIDEO =
+            1001
     }
 
     private val api =
         MalApi(OkHttpClient())
-
-    private val tracker by lazy {
-        MalTracker(api)
-    }
 
     private val scope =
         CoroutineScope(
@@ -66,13 +64,12 @@ class MainActivity : Activity() {
         super.onCreate(savedInstanceState)
 
         buildUi()
-
         handleIntent(intent)
     }
 
     /*
      * =========================================================
-     * UI
+     * MAIN UI
      * =========================================================
      */
 
@@ -95,75 +92,164 @@ class MainActivity : Activity() {
             TextView(this)
 
         title.text =
-            "VLC → MAL Sync"
+            "VlcMalSync"
 
         title.textSize =
-            26f
+            28f
+
+        val subtitle =
+            TextView(this)
+
+        subtitle.text =
+            "Anime player + MyAnimeList sync"
+
+        subtitle.textSize =
+            16f
 
         connection =
             TextView(this)
 
-        updateConnectionText()
-
         connection.textSize =
             16f
+
+        updateConnectionText()
 
         val login =
             Button(this)
 
         login.text =
-            "Connect MyAnimeList"
+            if (getToken() != null) {
+                "Reconnect MyAnimeList"
+            } else {
+                "Connect MyAnimeList"
+            }
 
         login.setOnClickListener {
             loginToMal()
         }
 
-        /*
-         * Temporary filename input.
-         *
-         * Later this will be supplied automatically by VLC.
-         */
-        val filename =
-            EditText(this)
-
-        filename.hint =
-            "Anime Title S1E01.mkv"
-
-        filename.setSingleLine(true)
-
-        val sync =
+        val openVideo =
             Button(this)
 
-        sync.text =
-            "Test Automatic MAL Sync"
+        openVideo.text =
+            "Open Anime Video"
 
-        sync.setOnClickListener {
-
-            syncFilename(
-                filename.text
-                    .toString()
-            )
+        openVideo.setOnClickListener {
+            openVideoPicker()
         }
 
         status =
             TextView(this)
 
         status.text =
-            "Waiting..."
+            "Choose an anime video to start."
 
         status.textSize =
             16f
 
         box.addView(title)
+        box.addView(subtitle)
         box.addView(connection)
         box.addView(login)
-
-        box.addView(filename)
-        box.addView(sync)
-
+        box.addView(openVideo)
         box.addView(status)
 
         setContentView(box)
+    }
+
+    /*
+     * =========================================================
+     * VIDEO PICKER
+     * =========================================================
+     */
+
+    private fun openVideoPicker() {
+
+        val intent =
+            Intent(
+                Intent.ACTION_OPEN_DOCUMENT
+            )
+
+        intent.addCategory(
+            Intent.CATEGORY_OPENABLE
+        )
+
+        intent.type =
+            "video/*"
+
+        startActivityForResult(
+            intent,
+            PICK_VIDEO
+        )
+    }
+
+    @Deprecated("Using Activity result for compatibility.")
+    override fun onActivityResult(
+        requestCode: Int,
+        resultCode: Int,
+        data: Intent?
+    ) {
+        super.onActivityResult(
+            requestCode,
+            resultCode,
+            data
+        )
+
+        if (
+            requestCode != PICK_VIDEO ||
+            resultCode != RESULT_OK
+        ) {
+            return
+        }
+
+        val uri =
+            data?.data
+                ?: return
+
+        /*
+         * Keep permission to the selected document so that
+         * the player can continue accessing it.
+         */
+        try {
+
+            contentResolver.takePersistableUriPermission(
+                uri,
+                Intent.FLAG_GRANT_READ_URI_PERMISSION
+            )
+
+        } catch (_: Exception) {
+            /*
+             * Some providers don't support persistable
+             * permissions. That's okay for playback.
+             */
+        }
+
+        openPlayer(uri)
+    }
+
+    private fun openPlayer(
+        uri: Uri
+    ) {
+
+        status.text =
+            "Opening video..."
+
+        val intent =
+            Intent(
+                this,
+                PlayerActivity::class.java
+            )
+
+        intent.putExtra(
+            "video_uri",
+            uri
+        )
+
+        intent.addFlags(
+            Intent.FLAG_GRANT_READ_URI_PERMISSION
+        )
+
+        startActivity(intent)
     }
 
     /*
@@ -184,7 +270,7 @@ class MainActivity : Activity() {
 
     /*
      * =========================================================
-     * OAUTH
+     * MAL OAUTH
      * =========================================================
      */
 
@@ -209,8 +295,6 @@ class MainActivity : Activity() {
             )
             .remove(PREF_TOKEN)
             .apply()
-
-        updateConnectionText()
 
         val uri =
             Uri.Builder()
@@ -391,248 +475,6 @@ class MainActivity : Activity() {
             PREF_TOKEN,
             null
         )
-    }
-
-    private fun requireToken(): String? {
-
-        val token =
-            getToken()
-
-        if (token == null) {
-
-            status.text =
-                "Connect MAL first."
-
-            updateConnectionText()
-        }
-
-        return token
-    }
-
-    /*
-     * =========================================================
-     * AUTOMATIC SYNC TEST
-     * =========================================================
-     */
-
-    private fun syncFilename(
-        filename: String
-    ) {
-
-        val token =
-            requireToken()
-                ?: return
-
-        if (filename.isBlank()) {
-
-            status.text =
-                "Enter a filename."
-
-            return
-        }
-
-        /*
-         * Use the existing AnimeParser.kt.
-         */
-        val parsed =
-            AnimeParser.parse(filename)
-
-        if (parsed == null) {
-
-            status.text =
-                "Ignored.\n\n" +
-                "Filename format must be:\n" +
-                "Anime Title S1E01.mkv"
-
-            return
-        }
-
-        status.text =
-            "Detected:\n" +
-            "${parsed.title}\n" +
-            "Season: " +
-            (parsed.season ?: "?") +
-            "\nEpisode: " +
-            parsed.episode +
-            "\n\nSearching MAL..."
-
-        scope.launch(Dispatchers.IO) {
-
-            try {
-
-                /*
-                 * Search MAL using the title extracted
-                 * from the filename.
-                 */
-                val results =
-                    api.search(
-                        token,
-                        parsed.title
-                    )
-
-                if (results.isEmpty()) {
-
-                    withContext(
-                        Dispatchers.Main
-                    ) {
-
-                        status.text =
-                            "Ignored.\n\n" +
-                            "No MAL results for:\n" +
-                            parsed.title
-                    }
-
-                    return@launch
-                }
-
-                /*
-                 * Find an exact title or alternative-title
-                 * match instead of blindly selecting result #1.
-                 */
-                val wanted =
-                    normalizeTitle(
-                        parsed.title
-                    )
-
-                val anime =
-                    results.firstOrNull { result ->
-
-                        normalizeTitle(
-                            result.title
-                        ) == wanted ||
-                        result.alternativeTitles.any { alt ->
-
-                            normalizeTitle(
-                                alt
-                            ) == wanted
-                        }
-                    }
-
-                if (anime == null) {
-
-                    withContext(
-                        Dispatchers.Main
-                    ) {
-
-                        status.text =
-                            "Ignored.\n\n" +
-                            "No reliable MAL match for:\n" +
-                            parsed.title
-                    }
-
-                    return@launch
-                }
-
-                withContext(
-                    Dispatchers.Main
-                ) {
-
-                    status.text =
-                        "Found MAL anime:\n" +
-                        anime.title +
-                        "\n\nSyncing..."
-                }
-
-                /*
-                 * If no season was specified, use 1 as the
-                 * temporary testing value.
-                 */
-                val season =
-                    parsed.season ?: 1
-
-                val result =
-                    tracker.trackEpisode(
-                        token = token,
-                        anime = anime,
-                        season = season,
-                        episode = parsed.episode
-                    )
-
-                withContext(
-                    Dispatchers.Main
-                ) {
-
-                    status.text =
-                        buildResultText(result)
-                }
-
-            } catch (e: Exception) {
-
-                withContext(
-                    Dispatchers.Main
-                ) {
-
-                    status.text =
-                        "Automatic sync failed:\n\n" +
-                        e.message
-                }
-            }
-        }
-    }
-
-    /*
-     * =========================================================
-     * TITLE NORMALIZATION
-     * =========================================================
-     */
-
-    private fun normalizeTitle(
-        title: String
-    ): String {
-
-        return title
-            .lowercase()
-            .replace(
-                Regex("[^a-z0-9]+"),
-                ""
-            )
-    }
-
-    /*
-     * =========================================================
-     * RESULT DISPLAY
-     * =========================================================
-     */
-
-    private fun buildResultText(
-        result: MalTracker.TrackResult
-    ): String {
-
-        return buildString {
-
-            append("✓ MAL SYNC SUCCESSFUL\n\n")
-
-            append(result.animeTitle)
-            append("\n")
-
-            append("Season: ")
-            append(result.season)
-            append("\n")
-
-            append("Episode: ")
-            append(result.episode)
-            append("\n")
-
-            append("Status: ")
-            append(result.status)
-            append("\n")
-
-            append("Episodes watched: ")
-            append(result.watchedEpisodes)
-            append("\n")
-
-            if (result.started) {
-
-                append("\n")
-                append("Started watching ✓")
-            }
-
-            if (result.completed) {
-
-                append("\n")
-                append("Completed ✓")
-            }
-        }
     }
 
     override fun onDestroy() {
